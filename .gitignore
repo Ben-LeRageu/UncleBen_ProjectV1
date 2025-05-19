@@ -1,0 +1,30 @@
+# Fichiers générés par ESP-IDF
+/build/
+sdkconfig
+sdkconfig.old
+*.bin
+*.elf
+*.map
+*.log
+*.pyc
+*.pyo
+__pycache__/
+*.bak
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch/
+.vscode/.browse* 
+
+# Archives et backups
+*.zip
+*.tar
+*.gz
+*.rar
+
+# Python
+.env/
+*.env
+.python-version
+
+# Logs
+*.log
