@@ -1,3 +1,5 @@
 idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "."
-                    REQUIRES driver esp_driver_touch_sens)
+                    # PRIV_INCLUDE_DIRS "$ENV{IDF_PATH}/components/driver/private_include"
+                    REQUIRES driver
+                    )

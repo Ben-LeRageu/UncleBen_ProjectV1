@@ -3,5 +3,6 @@
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32s3"
     },
-    "C_Cpp.errorSquiggles": "enabled"
+    "C_Cpp.errorSquiggles": "enabled",
+    "idf.flashType": "UART"
 }

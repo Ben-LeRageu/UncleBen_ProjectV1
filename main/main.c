@@ -1,19 +1,20 @@
 #include <stdio.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "driver/touch_pad.h"
 #include "esp_mac.h"
 #include "driver/i2c.h"
-#include "driver/touch_sensor.h"
+#include "driver/touch_pad.h"
+//#include "driver/touch_sensor.h"
+// ATTENTION : Inclusion d’un header interne non documenté.
+// Cette fonction peut disparaître ou être modifiée dans une future version d’ESP-IDF.
+//#include "esp_private/touch_filter.h"
 
 #define TOUCH_THRESH_NO_USE   (0)
-#define TOUCH_THRESH_PERCENT  (80)
+#define TOUCH_THRESH_PERCENT  (70)// Seuil à 80% de la valeur au repos
 #define NUM_TOUCH_BUTTONS 14
-
-// esp_err_t touch_pad_filter_start(uint32_t period_ms);
-// esp_err_t touch_pad_filter_read(touch_pad_t pad_num, uint16_t *p_touch_value);
-// int touch_pad_get_gpio_num(touch_pad_t touch_pad_num);
+#define TOUCH_FILTER_MODE_EN  (1)
 
 void init_touch_buttons(void);
 void lire_touches_tactiles(void);
@@ -39,37 +40,28 @@ typedef enum
     TOUCH_BOUTON_TURNREMINDER = TOUCH_PAD_NUM11
 } touch_bouton_t;
 
-// typedef struct {
-//     touch_pad_t pad;
-//     const char *nom;
-// } touche_tactile_info_t;
+// Structure des boutons tactiles
+typedef struct {
+    touch_pad_t pad;
+    const char *nom;
+} touche_tactile_info_t;
 
-const char *bouton_noms[] = {
-    [TOUCH_BOUTON_AIRFRY] = "AirFry",
-    [TOUCH_BOUTON_FRIES] = "Fries",
-    [TOUCH_BOUTON_REHEAT] = "Reheat",
-    [TOUCH_BOUTON_MINUS] = "Minus",
-    [TOUCH_BOUTON_TEMPTIME] = "Temp/Time",
-    [TOUCH_BOUTON_PLUS] = "Plus",
-    [TOUCH_BOUTON_CROQUETTE] = "Croquette",
-    [TOUCH_BOUTON_DEHYDRATE] = "Dehydrate",
-    [TOUCH_BOUTON_KEEPWARM] = "KeepWarm",
-    [TOUCH_BOUTON_PREHEAT] = "Preheat",
-    [TOUCH_BOUTON_STOPCANCEL] = "Stop/Cancel",
-    [TOUCH_BOUTON_POWER] = "Power",
-    [TOUCH_BOUTON_START] = "Start",
-    [TOUCH_BOUTON_TURNREMINDER] = "TurnReminder"
+const touche_tactile_info_t boutons_touches[] = {
+    { TOUCH_BOUTON_AIRFRY,      "Air Fry" },
+    { TOUCH_BOUTON_FRIES,       "Fries" },
+    { TOUCH_BOUTON_REHEAT,      "Reheat" },
+    { TOUCH_BOUTON_MINUS,       "Minus" },
+    { TOUCH_BOUTON_TEMPTIME,    "Temp/Time" },
+    { TOUCH_BOUTON_PLUS,        "Plus" },
+    { TOUCH_BOUTON_CROQUETTE,   "Croquette" },
+    { TOUCH_BOUTON_DEHYDRATE,   "Dehydrate" },
+    { TOUCH_BOUTON_KEEPWARM,    "Keep Warm" },
+    { TOUCH_BOUTON_PREHEAT,     "Preheat" },
+    { TOUCH_BOUTON_STOPCANCEL,  "Stop/Cancel" },
+    { TOUCH_BOUTON_POWER,       "Power" },
+    { TOUCH_BOUTON_START,       "Start" },
+    { TOUCH_BOUTON_TURNREMINDER,"Turn Reminder" },
 };
-
-static touch_sensor_handle_t controller = NULL;
-static touch_pad_t boutons[NUM_TOUCH_BUTTONS] = {
-    TOUCH_BOUTON_AIRFRY, TOUCH_BOUTON_FRIES, TOUCH_BOUTON_REHEAT, TOUCH_BOUTON_MINUS,
-    TOUCH_BOUTON_TEMPTIME, TOUCH_BOUTON_PLUS, TOUCH_BOUTON_CROQUETTE, TOUCH_BOUTON_DEHYDRATE,
-    TOUCH_BOUTON_KEEPWARM, TOUCH_BOUTON_PREHEAT, TOUCH_BOUTON_STOPCANCEL, TOUCH_BOUTON_POWER,
-    TOUCH_BOUTON_START, TOUCH_BOUTON_TURNREMINDER
-};
-
-static touch_channel_handle_t channels[NUM_TOUCH_BUTTONS];
 
 void app_main(void)
 {
@@ -88,77 +80,66 @@ void app_main(void)
 
 void init_touch_buttons(void)
 {
-    ESP_LOGI(TAG, "Initialisation du controleur de capteurs tactiles");
-    
-    touch_sensor_controller_config_t ctrl_config = {
-        .buffer_type = TOUCH_CHANNEL_IO_BUFFER_TYPE_NO_BUFFER,
-        .fsm_mode = TOUCH_FSM_MODE_TIMER,
+    ESP_ERROR_CHECK(touch_pad_init());
+for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) 
+{
+    ESP_ERROR_CHECK(touch_pad_config(boutons_touches[i].pad));
+}
+ESP_ERROR_CHECK(touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER));
+ESP_ERROR_CHECK(touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V));
+
+// Configuration avancée du filtre
+    touch_filter_config_t filter_cfg = {
+        .mode = TOUCH_PAD_FILTER_IIR_4,   // Mode IIR standard
+        .debounce_cnt = 1,                // Déclenche après 1 lecture stable
+        .noise_thr = 0,                   // Aucun seuil de bruit (optionnel)
+        .jitter_step = 4,                 // Étape de réduction du bruit
+        .smh_lvl = TOUCH_PAD_SMOOTH_IIR_2 // Lissage modéré
     };
-    ESP_ERROR_CHECK(touch_sensor_install_controller(&ctrl_config, &controller));
+    ESP_ERROR_CHECK(touch_pad_filter_set_config(&filter_cfg));
+    ESP_ERROR_CHECK(touch_pad_filter_enable());  // Activation du filtre
+//ESP_ERROR_CHECK(touch_pad_filter_start(10));
 
-    for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) {
-        touch_pad_t pad = boutons[i];
-
-        touch_pad_config_t pad_config = {
-            .channel_num = pad,
-            .channel_type = TOUCH_CHANNEL_TYPE_MEAS,
-            .gpio_num = -1 // auto-détection via pad number
-        };
-
-        touch_channel_config_t chan_config = {
-            .pad_config = pad_config,
-            .flags.pullup = true,
-        };
-
-        ESP_ERROR_CHECK(touch_sensor_new_channel(controller, &chan_config, &channels[i]));
-        ESP_LOGI(TAG, "Canal tactile configuré pour %s (TouchPad %d)", bouton_noms[pad], pad);
-    }
-
-    ESP_ERROR_CHECK(touch_sensor_start(controller));
 }
 
-int touch_pad_get_gpio_num(touch_pad_t touch_pad_num)
-{
-    // Mapping manuel basé sur ESP32-S3 datasheet
-    static const int gpio_map[] = {
-        1, 2, 3, 4, 5, 6, 7,
-        8, 9, 10, 11, 12, 13, 14, 15
-    };
+// int touch_pad_get_gpio_num(touch_pad_t touch_pad_num)
+// {
+//     // Mapping manuel basé sur ESP32-S3 datasheet
+//     static const int gpio_map[] = {
+//         1, 2, 3, 4, 5, 6, 7,
+//         8, 9, 10, 11, 12, 13, 14, 15
+//     };
 
-    if (touch_pad_num >= 0 && touch_pad_num < sizeof(gpio_map)/sizeof(gpio_map[0])) {
-        return gpio_map[touch_pad_num];
-    } else {
-        return -1; // Erreur
+//     if (touch_pad_num >= 0 && touch_pad_num < sizeof(gpio_map)/sizeof(gpio_map[0])) {
+//         return gpio_map[touch_pad_num];
+//     } else {
+//         return -1; // Erreur
+//     }
+// }
+
+void calibrer_thresholds(void)
+{
+    uint32_t val_filtree = 0;
+    for (int i = 0; i < sizeof(boutons_touches)/sizeof(boutons_touches[0]); i++) 
+    {
+        ESP_ERROR_CHECK(touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree));
+        uint32_t seuil = val_filtree * TOUCH_THRESH_PERCENT /100; // 80% de la valeur au repos
+        ESP_ERROR_CHECK(touch_pad_set_thresh(boutons_touches[i].pad, seuil));
+
+        ESP_LOGI("CALIBRATION", "%s: valeur au repos = %"PRIu32" → seuil = %"PRIu32,
+                 boutons_touches[i].nom, val_filtree, seuil);
     }
 }
 
 void lire_touches_tactiles(void)
 {
-    uint32_t value;
-    for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) {
-        ESP_ERROR_CHECK(touch_channel_read_data(channels[i], &value));
-        ESP_LOGI(TAG, "%s = %lu", bouton_noms[boutons[i]], value);
-    }
-} 
-
-
-void calibrer_thresholds(void)
-{
-    uint32_t valeur_repos = 0;
-    for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) {
-        // Lire valeur au repos
-        ESP_ERROR_CHECK(touch_channel_read_data(channels[i], &valeur_repos));
-
-        uint32_t seuil = (uint32_t)(valeur_repos * 0.8); // seuil = 80% de repos
-
-        // Appliquer le seuil
-        ESP_ERROR_CHECK(touch_channel_set_threshold(channels[i], seuil));
-
-        ESP_LOGI("CALIBRATION", "%s: repos = %lu → seuil = %lu",
-                 bouton_noms[boutons[i]], valeur_repos, seuil);
+    uint32_t val_filtree = 0;
+    for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) 
+    {
+        touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree);
+        ESP_LOGI("TOUCH", "%s (Touch Pad %d) = %"PRIu32,
+                 boutons_touches[i].nom,
+                 boutons_touches[i].pad,
+                 val_filtree);
     }
 }
-
-
-
-
