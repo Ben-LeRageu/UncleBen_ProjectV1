@@ -34,5 +34,24 @@ esp_err_t is31fl3731_init(uint8_t addr) {
 esp_err_t is31fl3731_light_led(uint8_t addr, uint8_t led_index, uint8_t brightness) {
     if (led_index >= 144) return ESP_ERR_INVALID_ARG;
     is31fl3731_select_page(addr, 0x01);
-    return is31fl3731_write_register(addr, led_index, brightness);
+    return is31fl3731_write_register(addr, led_index, brightness);   
+}
+
+void test_all_leds(uint8_t addr) {
+    const uint8_t led_indices[] = {
+        0, 1, 2, 3, 4, 5,       // CA1 à CA6 sur CB1
+        18, 19, 20, 21, 22, 23, // CA1 à CA6 sur CB2
+        36, 37, 38, 39, 40, 41  // CA1 à CA6 sur CB3
+    };
+
+    if (is31fl3731_init(addr) != ESP_OK) {
+        ESP_LOGE("IS31FL3731", "Échec de l'initialisation");
+        return;
+    }
+
+    for (int i = 0; i < sizeof(led_indices); i++) {
+        is31fl3731_light_led(addr, led_indices[i], 255);
+    }
+
+    ESP_LOGI("IS31FL3731", "Toutes les LEDs allumées.");
 }
