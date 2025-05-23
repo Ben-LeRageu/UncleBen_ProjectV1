@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <inttypes.h>
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "driver/i2c.h"
 #include "driver/touch_pad.h"
 #include "freertos/queue.h"

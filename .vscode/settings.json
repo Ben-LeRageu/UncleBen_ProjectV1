@@ -1,8 +1,8 @@
 {
-    "idf.portWin": "COM24",
+    "idf.portWin": "COM3",
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32s3"
     },
-    "C_Cpp.errorSquiggles": "enabled",
+    "C_Cpp.errorSquiggles": "disabled",
     "idf.flashType": "UART"
 }
