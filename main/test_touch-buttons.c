@@ -190,18 +190,18 @@
 //     }
 // }
 
-// // void lire_touches_tactiles(void)
-// // {
-// //     for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) {
-// //         uint32_t val_filtree = 0;
-// //         touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree);
-// //         if (val_filtree < valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100)
-// // {
-// //             ESP_LOGI("TOUCH", "%s activé! (val = %"PRIu32")", 
-// //                      boutons_touches[i].nom, val_filtree);
-// //         }
-// //     }
-// // }
+// void lire_touches_tactiles(void)
+// {
+//     for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) {
+//         uint32_t val_filtree = 0;
+//         touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree);
+//         if (val_filtree < valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100)
+// {
+//             ESP_LOGI("TOUCH", "%s activé! (val = %"PRIu32")", 
+//                      boutons_touches[i].nom, val_filtree);
+//         }
+//     }
+// }
 
 // void lire_touches_tactiles(void)
 // {
@@ -209,7 +209,6 @@
 //     for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) 
 //     {
 //         ESP_ERROR_CHECK(touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree));
-
 //         if (val_filtree < valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100)
 //         {
 //             ESP_LOGI("TOUCH", "%s: TOUCHE DÉTECTÉE (val = %"PRIu32", seuil = %"PRIu32")",
@@ -226,7 +225,7 @@
 // {
 //     uint32_t val_filtree = 0;
 //         ESP_ERROR_CHECK(touch_pad_read_raw_data(boutons_touches[ucNumBouton].pad, &val_filtree));
-
+//
 //         if (val_filtree < valeurs_repos[ucNumBouton] * TOUCH_THRESH_PERCENT / 100)
 //         {
 //             ESP_LOGI("TOUCH", "%s: TOUCHE DÉTECTÉE (val = %"PRIu32", seuil = %"PRIu32")",
@@ -259,7 +258,7 @@
 //         touch_pad_read_benchmark(boutons_touches[i].pad, &valeurs_repos[i]);
 //         uint32_t seuil = valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100;
 //         touch_pad_set_thresh(boutons_touches[i].pad, seuil);
-
+//
 //         ESP_LOGI("CALIBRATION", "%s: repos = %"PRIu32" → seuil = %"PRIu32,
 //                  boutons_touches[i].nom, valeurs_repos[i], seuil);
 //     }
@@ -270,7 +269,6 @@
 //     touch_evt_t evt;
 //     vTaskDelay(50 / portTICK_PERIOD_MS);
 //     calibrer_touch_seuils();
-
 //     while (1) 
 //     {
 //         if (xQueueReceive(queue_touch_evt, &evt, portMAX_DELAY))

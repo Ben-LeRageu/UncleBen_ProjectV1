@@ -111,7 +111,11 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(i2c_master_init());
     //is31fl3731_init(addr);
-    test_all_leds(addr);
+    if (is31fl3731_init(addr) != ESP_OK) {
+        ESP_LOGE("IS31FL3731", "Échec de l'initialisation");
+        return;
+    }
+   // test_all_leds(addr);
     //airfryer_set_etat(&fryer);
     if(queue_touch_evt == NULL)
     {
@@ -122,8 +126,6 @@ void app_main(void)
 }
 
 //fonction init I2C
-
-
 esp_err_t i2c_master_init(void)
 {
     i2c_config_t conf = {
@@ -148,7 +150,7 @@ esp_err_t i2c_master_init(void)
 
 void init_touch_buttons(void)
 {
-    static uint32_t denoise_value = 0 ;
+    //static uint32_t denoise_value = 0 ;
      ESP_LOGI(TAG, "Initialisation des boutons tactiles...");
     touch_pad_init();
     touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
@@ -288,61 +290,61 @@ void touch_task(void *param)
             //         }
             //         airfryer_set_etat(&fryer);
             //         break;
-
+            //
             //     case TOUCH_BOUTON_AIRFRY:
             //         fryer.time = "20:00";
             //         fryer.temp = "400";
             //         break;
-
+            //
             //     case TOUCH_BOUTON_DEHYDRATE:
             //         fryer.time = "8h:00";
             //         fryer.temp = "135";
             //         break;
-
+            //
             //     case TOUCH_BOUTON_FRIES:
             //         fryer.time = "15:00";
             //         fryer.temp = "400";
             //         break;
-
+            //
             //     case TOUCH_BOUTON_KEEPWARM:
             //         fryer.time = "30:00";
             //         fryer.temp = "200";
             //         break;
-                
+            //    
             //     case TOUCH_BOUTON_NUGGETS:
             //         fryer.time = "15:00";
             //         fryer.temp = "375";
             //         break;
-
+            //
             //     case TOUCH_BOUTON_MINUS:
             //         bouton_Minus_callback();
             //         break;
-                
+            //     
             //     case TOUCH_BOUTON_PLUS:
             //         bouton_Plus_callback();
             //         break;
-
+            //
             //     case TOUCH_BOUTON_REHEAT:
             //         fryer.time = "15:00";
             //         fryer.temp = "300";
             //         break;
-
+            //
             //     case TOUCH_BOUTON_START:
             //         bouton_Start_callback();
             //         break;
-
+            //
             //     case TOUCH_BOUTON_STOPCANCEL:
             //         bouton_StopCancel_callback();
             //         break;
-
+            //
             //     case TOUCH_BOUTON_TEMPTIME:
             //         bouton_TempTime_callback();
             //         break;
-
+            //
             //     case TOUCH_BOUTON_PREHEAT:
             //         bouton_Preheat_callback();
             //         break;
-                
+            //    
             //     case TOUCH_BOUTON_TURNREMINDER:
             //         bouton_TurnReminder_callback();
             //         break;
@@ -441,29 +443,43 @@ void bouton_TurnReminder_callback(void)
 
 }
 
-void test_all_leds(uint8_t addr) {
-    const uint8_t led_indices[] = {
-        0, 1, 2, 3, 4, 5,       // CA1 à CA6 sur CB1
-        18, 19, 20, 21, 22, 23, // CA1 à CA6 sur CB2
-        36, 37, 38, 39, 40, 41  // CA1 à CA6 sur CB3
-    };
-
-    if (is31fl3731_init(addr) != ESP_OK) {
-        ESP_LOGE("IS31FL3731", "Échec de l'initialisation");
-        return;
-    }
-
-    for (int i = 0; i < sizeof(led_indices); i++) {
-        is31fl3731_light_led(addr, led_indices[i], 255);
-    }
-
+void test_all_leds(uint8_t addr) 
+{
+    // const uint8_t led_indices[] = {
+    //     0, 1, 2, 3, 4, 5,       // CA1 à CA6 sur CB1
+    //     18, 19, 20, 21, 22, 23, // CA1 à CA6 sur CB2
+    //     36, 37, 38, 39, 40, 41  // CA1 à CA6 sur CB3
+    // };
+    // const uint8_t led_indices[] = {
+    //     0, 1, 2, 3, 4, 5, 6, 7, 8,
+    //     9, 10, 11, 12, 13, 14, 15, 16,
+    //     17, 18, 19, 20, 21, 22, 23, 24,
+    //     25, 26, 27, 28, 29, 30, 31, 32,
+    //     33, 34, 35, 36, 37, 38, 39, 40,
+    //     41, 42, 43, 44, 45, 46, 47, 48,
+    //     49, 50, 51, 52, 53, 54, 55, 56,
+    //     57, 58, 59, 60, 61, 62, 63, 64,
+    //     65, 66, 67, 68, 69, 70, 71, 72,
+    //     73, 74, 75, 76, 77, 78, 79, 
+    
+    // for (int i = 0; i < sizeof(led_indices); i++)
+    // {
+        // is31fl3731_light_led(addr, led_indices[i], 255);
+    // }
+    // for (int i = 0; i < 100; i++)
+    // {
+    //     is31fl3731_light_led(addr, i, 255);
+    //     //ESP_LOGI("valeur de i: %")
+    //     printf("valeur de i: %d ; ",i);
+    //     vTaskDelay(1000);
+    // }
+    //is31fl3731_light_led(addr, 38, 255);
     ESP_LOGI("IS31FL3731", "Toutes les LEDs allumées.");
 }
 
 esp_err_t is31fl3731_init(uint8_t addr)
  {
     esp_err_t ret;
-
     // 1. Sélectionner la Function Register page (0x0B)
     ret = is31fl3731_select_page(addr, 0x0B);
     if (ret != ESP_OK) return ret;
@@ -480,14 +496,14 @@ esp_err_t is31fl3731_init(uint8_t addr)
     ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x01, 0x00);
     if (ret != ESP_OK) return ret;
 
+    printf("initialisation des leds \r");
+    // for (int i = 0; i < 100; i++)
+    // {
+    //     is31fl3731_light_led(addr, i, 0);
+    // }
+    
+
     return ESP_OK;
-    // esp_err_t ret = is31fl3731_select_page(addr, 0x0B);
-    // if (ret != ESP_OK) return ret;
-    // ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x00, 0x01);
-    // if (ret != ESP_OK) return ret;
-    // ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x01, 0x00);
-    // ESP_LOGI(TAG, "IS31FL3731 initialized");
-    // return ret;
 }
 
 esp_err_t is31fl3731_write_register(i2c_port_t i2c_num, uint8_t addr, uint8_t reg, uint8_t data) 
@@ -518,13 +534,30 @@ cleanup:
     return ret;
 }
 
-esp_err_t is31fl3731_select_page(uint8_t addr, uint8_t page) {
+esp_err_t is31fl3731_select_page(uint8_t addr, uint8_t page)
+{
     return is31fl3731_write_register(I2C_NUM_0, addr, 0xFD, page);
 }
 
-esp_err_t is31fl3731_light_led(uint8_t addr, uint8_t led_index, uint8_t brightness) 
+// esp_err_t is31fl3731_light_led(uint8_t addr, uint8_t led_index, uint8_t brightness) 
+// {
+//     if (led_index >= 144) return ESP_ERR_INVALID_ARG;
+//     is31fl3731_select_page(addr, 0x01);
+//     return is31fl3731_write_register(I2C_NUM_0, addr, led_index, brightness);   
+// }
+esp_err_t is31fl3731_light_led( uint8_t addr, uint8_t indiceCA, uint8_t indiceCB, uint8_t etatCA, uint8_t etatCB)
 {
     if (led_index >= 144) return ESP_ERR_INVALID_ARG;
-    is31fl3731_select_page(addr, 0x01);
-    return is31fl3731_write_register(I2C_NUM_0, addr, led_index, brightness);   
+    esp_err_t ret = is31fl3731_select_page(addr, 0x00);
+    if (ret != ESP_OK) {
+        ESP_LOGE("LED", "Erreur select_page");
+        return ret;
+    }
+    ret = is31fl3731_write_register(I2C_NUM_0, addr, indiceCA, etatCA);
+    ret = is31fl3731_select_page(addr, 0x00);
+    ret = is31fl3731_write_register(I2C_NUM_0, addr, indiceCB, etatCB);
+
+    ESP_LOGI("LED", "LED[%d] ← %d [%s]", led_index, brightness, ret == ESP_OK ? "OK" : "FAIL");
+
+    return ret;
 }
