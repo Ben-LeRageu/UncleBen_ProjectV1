@@ -9,19 +9,14 @@
 #include "driver/touch_pad.h"
 #include "freertos/queue.h"
 #include "is31fl3731.h"
-
-// Structure de l'état de l'airfryer
-typedef struct {
-    int temp;             // Température (ex: 400)
-    char time[6];         // Temps au format "MM:SS", ex: "12:30"
-    char state[16];       // "cooking", "paused", "stopped"
-    char mode[4];         // "AP" ou "STA"
-} air_fryer_status_t;
+#include "Cuisson.h"
+#include "air_fryer.h"  // Ajout du nouveau fichier d'en-tête
 
 // Déclaration globale de la variable fryer
-static air_fryer_status_t fryer = {
+air_fryer_status_t fryer = {
     .temp = 0,
-    .time = "00:00",
+    .total_minutes = 0,
+    .time_display = "00:00",
     .state = "OFF",
     .mode = "AP"
 };
@@ -48,16 +43,20 @@ void bouton_Minus_callback(void);
 void bouton_Plus_callback(void);
 void bouton_Start_callback(void);
 void bouton_StopCancel_callback(void);
-void bouton_TempTime_callback(void);
+void bouton_TempTime_callback(bool *temptime);
 void bouton_Preheat_callback(void);
 void bouton_TurnReminder_callback(void);
+void update_time_display(air_fryer_status_t* fryer);
 
 #define TOUCH_THRESH_PERCENT  (2)  // Seuil à 2% de la valeur au repos
 #define NUM_TOUCH_BUTTONS     14
+#define TEMP 1
+#define TIME 0
 
 static const char *TAG = "TOUCH_MAIN";
 static QueueHandle_t queue_touch_evt = NULL;
 static uint32_t valeurs_repos[NUM_TOUCH_BUTTONS];
+static bool temptime = TEMP;
 
 // Définition des touches
 typedef enum 
@@ -113,10 +112,11 @@ uint8_t addresse_ledCA[9] = {0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x1
 uint8_t addresse_ledCB[9] = {0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11};
 
 
+
 void app_main(void)
 {
     uint8_t addr = 0x74;
-    
+    cuisson_gpio_init();
     
     ESP_ERROR_CHECK(i2c_master_init());
     if (is31fl3731_init(addr) != ESP_OK) {
@@ -130,7 +130,7 @@ void app_main(void)
         queue_touch_evt = xQueueCreate(16, sizeof(touch_evt_t));
     }
     init_touch_buttons();
-    xTaskCreate(touch_task, "touch_evt_task", 4096, NULL, 5, NULL);
+    xTaskCreate(touch_task, "touch_evt_task", 4096 /*2048*/, NULL, 5, NULL);
 }
 
 //fonction init I2C
@@ -192,39 +192,6 @@ void init_touch_buttons(void)
     touch_pad_fsm_start();
 }
 
-// void lire_touches_tactiles(void)
-// {
-//     uint32_t val_filtree = 0;
-//     for (int i = 0; i < NUM_TOUCH_BUTTONS; i++) 
-//     {
-//         ESP_ERROR_CHECK(touch_pad_read_raw_data(boutons_touches[i].pad, &val_filtree));
-//         if (val_filtree < valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100)
-//         {
-//             ESP_LOGI("TOUCH", "%s: TOUCHE DÉTECTÉE (val = %"PRIu32", seuil = %"PRIu32")",
-//                      boutons_touches[i].nom, val_filtree, valeurs_repos[i] * TOUCH_THRESH_PERCENT / 100);
-//         }
-//         else
-//         {
-//             ESP_LOGI("TOUCH", "%s: rien (val = %"PRIu32")", boutons_touches[i].nom, val_filtree);
-//         }
-//     }
-// }
-
-// void lire_une_touches_tactile(unsigned char ucNumBouton)
-// {
-//     uint32_t val_filtree = 0;
-//         ESP_ERROR_CHECK(touch_pad_read_raw_data(boutons_touches[ucNumBouton].pad, &val_filtree));
-//         if (val_filtree < valeurs_repos[ucNumBouton] * TOUCH_THRESH_PERCENT / 100)
-//         {
-//             ESP_LOGI("TOUCH", "%s: TOUCHE DÉTECTÉE (val = %"PRIu32", seuil = %"PRIu32")",
-//                      boutons_touches[ucNumBouton].nom, val_filtree, valeurs_repos[ucNumBouton] * TOUCH_THRESH_PERCENT / 100);
-//         }
-//         else
-//         {
-//             ESP_LOGI("TOUCH", "%s: rien (val = %"PRIu32")", boutons_touches[ucNumBouton].nom, val_filtree);
-//         }
-// }
-
 static void touch_isr_cb(void *arg) 
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -262,45 +229,28 @@ void touch_task(void *param)
     {
         if (xQueueReceive(queue_touch_evt, &evt, portMAX_DELAY))
         {
-            int gpio = boutons_touches[evt.pad_num].pad;
-            //for (int i = 0; i < NUM_TOUCH_BUTTONS; ++i) 
-            //{
-            //    if (boutons_touches[i].pad == evt.pad_num) 
-            //    {
-            //        if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
-            //         {
-            //             ESP_LOGI(TAG, "TOUCH DÉTECTÉ: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-            //         } 
-            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) 
-            //         {
-            //             ESP_LOGI(TAG, "RELÂCHE: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-            //         } 
-            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_TIMEOUT) 
-            //         {
-            //             ESP_LOGW(TAG, "TIMEOUT sur pad %"PRIu32, evt.pad_num);
-            //             touch_pad_timeout_resume();// essentiel sinon le FSM arrete de mesurer
-            //         }
-            //     }
-            // }
             touch_pad_t touch_num = evt.pad_num;  // On utilise directement le numéro du pad
             if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
             {
             switch (touch_num)
             {
                 // Suivre exactement l'ordre de l'énumération touch_bouton_t
-                case TOUCH_PAD_NUM10:  // AIRFRY (premier dans l'enum)
-                    strcpy(fryer.time, "20:00");
+                case TOUCH_PAD_NUM10:  // AIRFRY
+                    fryer.total_minutes = 20;
                     fryer.temp = 400;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM2:   // FRIES
-                    strcpy(fryer.time, "15:00");
+                    fryer.total_minutes = 15;
                     fryer.temp = 400;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM3:   // REHEAT
-                    strcpy(fryer.time, "15:00");
+                    fryer.total_minutes = 15;
                     fryer.temp = 300;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM9:   // MINUS
@@ -308,7 +258,7 @@ void touch_task(void *param)
                     break;
 
                 case TOUCH_PAD_NUM7:   // TEMPTIME
-                    bouton_TempTime_callback();
+                    bouton_TempTime_callback(&temptime);
                     break;
 
                 case TOUCH_PAD_NUM8:   // PLUS
@@ -316,18 +266,21 @@ void touch_task(void *param)
                     break;
 
                 case TOUCH_PAD_NUM6:   // NUGGETS
-                    strcpy(fryer.time, "15:00");
+                    fryer.total_minutes = 15;
                     fryer.temp = 375;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM1:   // DEHYDRATE
-                    strcpy(fryer.time, "8h:00");
+                    fryer.total_minutes = 480;  // 8 heures
                     fryer.temp = 135;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM5:   // KEEPWARM
-                    strcpy(fryer.time, "30:00");
+                    fryer.total_minutes = 30;
                     fryer.temp = 200;
+                    update_time_display(&fryer);
                     break;
 
                 case TOUCH_PAD_NUM14:  // PREHEAT
@@ -416,37 +369,69 @@ void airfryer_set_etat(air_fryer_status_t* fryer)
         {
             is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x01);
         }
-        ESP_LOGI("AirFryer", "État %s, seules LED POWER allumée.", fryer->state);
+        ESP_LOGI("AirFryer", "État %s, seule LED POWER allumée.", fryer->state);
     }
-
     // Allumer toujours la LED D3-17 (POWER) - pas besoin de resélectionner la page
     is31fl3731_light_ledCA(addr, 0x08, 0x01);
-    is31fl3731_light_ledCB(addr, 0x05, 0x01);
+    is31fl3731_light_ledCB(addr, 0x05, 0x00);
 }
 
 void bouton_Minus_callback(void)
 {
-
+    if((temptime == TEMP) && (fryer.temp > 100))
+    {
+        fryer.temp -= 25;
+        ESP_LOGI("TEMP", "Temperature diminuée à %d°C", fryer.temp);
+    }
+    else
+    {
+        fryer.total_minutes--;
+        update_time_display(&fryer);
+        ESP_LOGI("TIME", "Temps restant: %s", fryer.time_display);
+    }
 }
 
 void bouton_Plus_callback(void)
 {
-    
+    if((temptime == TEMP) && (fryer.temp < 400))
+    {
+        fryer.temp += 25;
+        ESP_LOGI("TEMP", "Temperature augmentée à %d°C", fryer.temp);
+    }
+    else
+    {
+        fryer.total_minutes++;
+        update_time_display(&fryer);
+        ESP_LOGI("TIME", "Temps restant: %s", fryer.time_display);
+    }
 }
 
 void bouton_Start_callback(void)
 {
-
+    maintenir_temperature((float)fryer.temp);
+    strcpy(fryer.state, "cooking");
+    airfryer_set_etat(&fryer);
 }
 
 void bouton_StopCancel_callback(void)
 {
-
+    stop_cuisson();
+    strcpy(fryer.state, "stopped");
+    airfryer_set_etat(&fryer);
 }
 
-void bouton_TempTime_callback(void)
+void bouton_TempTime_callback(bool *temptime)
 {
-
+    if(*temptime == TEMP)
+    {
+        *temptime = TIME;
+        ESP_LOGI("MODE", "Mode: TEMPS (actuel: %s)", fryer.time_display);
+    }
+    else
+    {
+        *temptime = TEMP;
+        ESP_LOGI("MODE", "Mode: TEMPERATURE (actuelle: %d°C)", fryer.temp);
+    }
 }
 
 void bouton_Preheat_callback(void)
@@ -461,34 +446,24 @@ void bouton_TurnReminder_callback(void)
 
 void test_all_leds(uint8_t addr) 
 {
-    // const uint8_t led_indices[] = {
-    //     0, 1, 2, 3, 4, 5,       // CA1 à CA6 sur CB1
-    //     18, 19, 20, 21, 22, 23, // CA1 à CA6 sur CB2
-    //     36, 37, 38, 39, 40, 41  // CA1 à CA6 sur CB3
-    // };
-    // const uint8_t led_indices[] = {
-    //     0, 1, 2, 3, 4, 5, 6, 7, 8,
-    //     9, 10, 11, 12, 13, 14, 15, 16,
-    //     17, 18, 19, 20, 21, 22, 23, 24,
-    //     25, 26, 27, 28, 29, 30, 31, 32,
-    //     33, 34, 35, 36, 37, 38, 39, 40,
-    //     41, 42, 43, 44, 45, 46, 47, 48,
-    //     49, 50, 51, 52, 53, 54, 55, 56,
-    //     57, 58, 59, 60, 61, 62, 63, 64,
-    //     65, 66, 67, 68, 69, 70, 71, 72,
-    //     73, 74, 75, 76, 77, 78, 79, 
     
-    // for (int i = 0; i < sizeof(led_indices); i++)
-    // {
-        // is31fl3731_light_led(addr, led_indices[i], 255);
-    // }
-    // for (int i = 0; i < 100; i++)
-    // {
-    //     is31fl3731_light_led(addr, i, 255);
-    //     //ESP_LOGI("valeur de i: %")
-    //     printf("valeur de i: %d ; ",i);
-    //     vTaskDelay(1000);
-    // }
-    //is31fl3731_light_led(addr, 38, 255);
     ESP_LOGI("IS31FL3731", "Toutes les LEDs allumées.");
+}
+// Fonction pour mettre à jour l'affichage du temps
+void update_time_display(air_fryer_status_t* fryer) 
+{
+    if (fryer->total_minutes < 100) 
+    {
+        // Format MM:SS
+        int minutes = fryer->total_minutes;
+        int seconds = 0;  // Pour l'instant, on garde les secondes à 0
+        snprintf(fryer->time_display, sizeof(fryer->time_display), "%02d:%02d", minutes, seconds);
+    } 
+    else 
+    {
+        // Format HhMM
+        int hours = fryer->total_minutes / 60;
+        int minutes = fryer->total_minutes % 60;
+        snprintf(fryer->time_display, sizeof(fryer->time_display), "%1dh%02d", hours, minutes);
+    }
 }

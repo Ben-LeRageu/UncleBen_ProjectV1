@@ -72,18 +72,16 @@ esp_err_t is31fl3731_init(uint8_t addr)
         ret = is31fl3731_write_register(I2C_NUM_0, addr, addresse_ledCB[i], 0xFF);
         if (ret != ESP_OK) return ret;
     }
-    //ret = is31fl3731_select_page(addr, 0x00);
     for(int i=3;i<8;i++)
     {
         ret = is31fl3731_write_register(I2C_NUM_0, addr, addresse_ledCB[i], 0x00);//mets les pins de CB non connectées à 0
         if (ret != ESP_OK) return ret;
     }
-    //ret = is31fl3731_select_page(addr, 0x00);
-    for(int i=0x24; i<0xAC; i++)
-    {
-        ret = is31fl3731_write_register(I2C_NUM_0, addr, i, 0xC0);
-        if (ret != ESP_OK) return ret;
-    }
+//    for(int i=0x24; i<0xAC; i++)
+  //  {
+    //    ret = is31fl3731_write_register(I2C_NUM_0, addr, i, 0xDF);//pwm
+    //    if (ret != ESP_OK) return ret;
+    //}
     
     printf("initialisation des leds \r");
     return ESP_OK;
