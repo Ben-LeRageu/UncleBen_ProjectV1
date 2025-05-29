@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <inttypes.h>
+#include <string.h>  // Pour strcmp et strcpy
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -7,7 +8,23 @@
 #include "driver/i2c.h"
 #include "driver/touch_pad.h"
 #include "freertos/queue.h"
-//#include "is31fl3731.h"
+#include "is31fl3731.h"
+
+// Structure de l'état de l'airfryer
+typedef struct {
+    int temp;             // Température (ex: 400)
+    char time[6];         // Temps au format "MM:SS", ex: "12:30"
+    char state[16];       // "cooking", "paused", "stopped"
+    char mode[4];         // "AP" ou "STA"
+} air_fryer_status_t;
+
+// Déclaration globale de la variable fryer
+static air_fryer_status_t fryer = {
+    .temp = 0,
+    .time = "00:00",
+    .state = "OFF",
+    .mode = "AP"
+};
 
 #define I2C_TIMEOUT_MS 100
 #define I2C_MASTER_SCL_IO  GPIO_NUM_21  // adapte selon ton schéma
@@ -17,13 +34,23 @@
 #define I2C_MASTER_TX_BUF_DISABLE 0     // Pas de buffer en mode master
 #define I2C_MASTER_RX_BUF_DISABLE 0
 
-void test_all_leds(uint8_t addr);
-esp_err_t is31fl3731_init(uint8_t addr);
-esp_err_t is31fl3731_select_page(uint8_t addr, uint8_t page);
-//esp_err_t is31fl3731_write_register(uint8_t addr, uint8_t reg, uint8_t data);
-esp_err_t is31fl3731_write_register(i2c_port_t i2c_num, uint8_t addr, uint8_t reg, uint8_t data);
-esp_err_t is31fl3731_light_led(uint8_t addr, uint8_t led_index, uint8_t brightness);
+// Prototypes
 esp_err_t i2c_master_init(void);
+void test_all_leds(uint8_t addr);
+void init_touch_buttons(void);
+void lire_touches_tactiles(void);
+void lire_une_touches_tactile(unsigned char ucNumBouton);
+void calibrer_touch_seuils(void);
+void touch_task(void *param);
+static void touch_isr_cb(void *arg);
+void airfryer_set_etat(air_fryer_status_t* fryer);
+void bouton_Minus_callback(void);
+void bouton_Plus_callback(void);
+void bouton_Start_callback(void);
+void bouton_StopCancel_callback(void);
+void bouton_TempTime_callback(void);
+void bouton_Preheat_callback(void);
+void bouton_TurnReminder_callback(void);
 
 #define TOUCH_THRESH_PERCENT  (2)  // Seuil à 2% de la valeur au repos
 #define NUM_TOUCH_BUTTONS     14
@@ -31,14 +58,6 @@ esp_err_t i2c_master_init(void);
 static const char *TAG = "TOUCH_MAIN";
 static QueueHandle_t queue_touch_evt = NULL;
 static uint32_t valeurs_repos[NUM_TOUCH_BUTTONS];
-
-// Prototypes
-void init_touch_buttons(void);
-void lire_touches_tactiles(void);
-void lire_une_touches_tactile(unsigned char ucNumBouton) ;
-void calibrer_touch_seuils(void);
-void touch_task(void *param);
-static void touch_isr_cb(void *arg);
 
 // Définition des touches
 typedef enum 
@@ -88,35 +107,24 @@ const touche_tactile_info_t boutons_touches[] = {
     { TOUCH_BOUTON_TURNREMINDER,"Turn Reminder" },
 };
 
-typedef struct {
-    int temp;             // Température (ex: 400)
-    char time[6];         // Temps au format "MM:SS", ex: "12:30"
-    char state[16];       // "cooking", "paused", "stopped"
-    char mode[4];         // "AP" ou "STA"
-} air_fryer_status_t;
-
 // Valeurs au repos
 static uint32_t valeurs_repos[NUM_TOUCH_BUTTONS] = {0};
-
+uint8_t addresse_ledCA[9] = {0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10};
+uint8_t addresse_ledCB[9] = {0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11};
 
 
 void app_main(void)
 {
     uint8_t addr = 0x74;
-    air_fryer_status_t fryer = {
-     .temp = 0,
-     .time = "00:00",
-     .state = "OFF",
-     .mode = "AP"
-    };
+    
+    
     ESP_ERROR_CHECK(i2c_master_init());
-    //is31fl3731_init(addr);
     if (is31fl3731_init(addr) != ESP_OK) {
         ESP_LOGE("IS31FL3731", "Échec de l'initialisation");
         return;
     }
    // test_all_leds(addr);
-    //airfryer_set_etat(&fryer);
+    airfryer_set_etat(&fryer);
     if(queue_touch_evt == NULL)
     {
         queue_touch_evt = xQueueCreate(16, sizeof(touch_evt_t));
@@ -150,8 +158,7 @@ esp_err_t i2c_master_init(void)
 
 void init_touch_buttons(void)
 {
-    //static uint32_t denoise_value = 0 ;
-     ESP_LOGI(TAG, "Initialisation des boutons tactiles...");
+    ESP_LOGI(TAG, "Initialisation des boutons tactiles...");
     touch_pad_init();
     touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
     touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);
@@ -160,8 +167,6 @@ void init_touch_buttons(void)
     {
         touch_pad_config(boutons_touches[i].pad);
     }
-    // touch_pad_denoise_read_data(*denoise_value);
-    // ESP_LOGI("valeur de ref de denoise:", ,denoise_value);
     // Configuration du canal de débruitage (denoise) sur T0
     touch_pad_denoise_t denoise_cfg = {
     .grade = TOUCH_PAD_DENOISE_BIT4,     // 4 bits à annuler
@@ -256,99 +261,107 @@ void touch_task(void *param)
     while (1) 
     {
         if (xQueueReceive(queue_touch_evt, &evt, portMAX_DELAY))
-         {
-            // int gpio = boutons_touches[evt.pad_num].gpio;
-            for (int i = 0; i < NUM_TOUCH_BUTTONS; ++i) 
-            {
-                if (boutons_touches[i].pad == evt.pad_num) 
-                {
-                    if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
-                     {
-                        ESP_LOGI(TAG, "TOUCH DÉTECTÉ: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-                    } 
-                    else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) 
-                    {
-                        ESP_LOGI(TAG, "RELÂCHE: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-                    } 
-                    else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_TIMEOUT) 
-                    {
-                        ESP_LOGW(TAG, "TIMEOUT sur pad %"PRIu32, evt.pad_num);
-                        touch_pad_timeout_resume();// essentiel sinon le FSM arrete de mesurer
-                    }
-                }
-            }
-            // switch (gpio)
-            // {
-            //     case TOUCH_BOUTON_POWER:
-            //         if(fryer.state == "OFF")
+        {
+            int gpio = boutons_touches[evt.pad_num].pad;
+            //for (int i = 0; i < NUM_TOUCH_BUTTONS; ++i) 
+            //{
+            //    if (boutons_touches[i].pad == evt.pad_num) 
+            //    {
+            //        if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
             //         {
-            //             fryer.state = "ON";
-            //         }
-            //         else
+            //             ESP_LOGI(TAG, "TOUCH DÉTECTÉ: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
+            //         } 
+            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) 
             //         {
-            //             fryer.state = "OFF";
+            //             ESP_LOGI(TAG, "RELÂCHE: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
+            //         } 
+            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_TIMEOUT) 
+            //         {
+            //             ESP_LOGW(TAG, "TIMEOUT sur pad %"PRIu32, evt.pad_num);
+            //             touch_pad_timeout_resume();// essentiel sinon le FSM arrete de mesurer
             //         }
-            //         airfryer_set_etat(&fryer);
-            //         break;
-            //
-            //     case TOUCH_BOUTON_AIRFRY:
-            //         fryer.time = "20:00";
-            //         fryer.temp = "400";
-            //         break;
-            //
-            //     case TOUCH_BOUTON_DEHYDRATE:
-            //         fryer.time = "8h:00";
-            //         fryer.temp = "135";
-            //         break;
-            //
-            //     case TOUCH_BOUTON_FRIES:
-            //         fryer.time = "15:00";
-            //         fryer.temp = "400";
-            //         break;
-            //
-            //     case TOUCH_BOUTON_KEEPWARM:
-            //         fryer.time = "30:00";
-            //         fryer.temp = "200";
-            //         break;
-            //    
-            //     case TOUCH_BOUTON_NUGGETS:
-            //         fryer.time = "15:00";
-            //         fryer.temp = "375";
-            //         break;
-            //
-            //     case TOUCH_BOUTON_MINUS:
-            //         bouton_Minus_callback();
-            //         break;
-            //     
-            //     case TOUCH_BOUTON_PLUS:
-            //         bouton_Plus_callback();
-            //         break;
-            //
-            //     case TOUCH_BOUTON_REHEAT:
-            //         fryer.time = "15:00";
-            //         fryer.temp = "300";
-            //         break;
-            //
-            //     case TOUCH_BOUTON_START:
-            //         bouton_Start_callback();
-            //         break;
-            //
-            //     case TOUCH_BOUTON_STOPCANCEL:
-            //         bouton_StopCancel_callback();
-            //         break;
-            //
-            //     case TOUCH_BOUTON_TEMPTIME:
-            //         bouton_TempTime_callback();
-            //         break;
-            //
-            //     case TOUCH_BOUTON_PREHEAT:
-            //         bouton_Preheat_callback();
-            //         break;
-            //    
-            //     case TOUCH_BOUTON_TURNREMINDER:
-            //         bouton_TurnReminder_callback();
-            //         break;
+            //     }
             // }
+            touch_pad_t touch_num = evt.pad_num;  // On utilise directement le numéro du pad
+            if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
+            {
+            switch (touch_num)
+            {
+                // Suivre exactement l'ordre de l'énumération touch_bouton_t
+                case TOUCH_PAD_NUM10:  // AIRFRY (premier dans l'enum)
+                    strcpy(fryer.time, "20:00");
+                    fryer.temp = 400;
+                    break;
+
+                case TOUCH_PAD_NUM2:   // FRIES
+                    strcpy(fryer.time, "15:00");
+                    fryer.temp = 400;
+                    break;
+
+                case TOUCH_PAD_NUM3:   // REHEAT
+                    strcpy(fryer.time, "15:00");
+                    fryer.temp = 300;
+                    break;
+
+                case TOUCH_PAD_NUM9:   // MINUS
+                    bouton_Minus_callback();
+                    break;
+
+                case TOUCH_PAD_NUM7:   // TEMPTIME
+                    bouton_TempTime_callback();
+                    break;
+
+                case TOUCH_PAD_NUM8:   // PLUS
+                    bouton_Plus_callback();
+                    break;
+
+                case TOUCH_PAD_NUM6:   // NUGGETS
+                    strcpy(fryer.time, "15:00");
+                    fryer.temp = 375;
+                    break;
+
+                case TOUCH_PAD_NUM1:   // DEHYDRATE
+                    strcpy(fryer.time, "8h:00");
+                    fryer.temp = 135;
+                    break;
+
+                case TOUCH_PAD_NUM5:   // KEEPWARM
+                    strcpy(fryer.time, "30:00");
+                    fryer.temp = 200;
+                    break;
+
+                case TOUCH_PAD_NUM14:  // PREHEAT
+                    bouton_Preheat_callback();
+                    break;
+
+                case TOUCH_PAD_NUM13:  // STOPCANCEL
+                    bouton_StopCancel_callback();
+                    break;
+
+                case TOUCH_PAD_NUM4:   // POWER
+                    if(strcmp(fryer.state, "OFF") == 0)
+                    {
+                        strcpy(fryer.state, "ON");
+                    }
+                    else
+                    {
+                        strcpy(fryer.state, "OFF");
+                    }
+                    airfryer_set_etat(&fryer);
+                    break;
+
+                case TOUCH_PAD_NUM12:  // START
+                    bouton_Start_callback();
+                    break;
+
+                case TOUCH_PAD_NUM11:  // TURNREMINDER
+                    bouton_TurnReminder_callback();
+                    break;
+
+                default:
+                    break;
+            }
+            }
             // for (int i = 0; i < NUM_TOUCH_BUTTONS; ++i) 
             // {
             //     if (boutons_touches[i].pad == evt.pad_num) 
@@ -371,49 +384,52 @@ void touch_task(void *param)
     }
 }
 
-// void airfryer_set_etat(const air_fryer_status_t* fryer)
-//     {
-//       const uint8_t addr = 0x74;
-//
-//       const uint8_t led_autres[] = {
-//         0, 1, 2, 3, 4, 5,
-//         18, 19, 20, 21, 22, 23,
-//         36, 37, 38, 39,
-//         41 // (sauf D3-17 à index 40)
-//       };
-//
-//       is31fl3731_select_page(addr, 0x01);
-//
-//       // Éteindre toutes les LEDs
-//       for (int i = 0; i < 144; i++) 
-//       {
-//         is31fl3731_write_register(addr, i, 0);
-//       }
-//
-//       // Allumer toujours la LED D3-17 (POWER)
-//       is31fl3731_write_register(addr, 40, 255);
-//
-//       // Si l'état est "ON", allume les autres LEDs
-//       if (strcmp(fryer->state, "ON") == 0) 
-//       {
-//         for (int i = 0; i < sizeof(led_autres); i++) 
-//         {
-//             is31fl3731_write_register(addr, led_autres[i], 255);
-//         }
-//         ESP_LOGI("AirFryer", "État ON, LEDs allumées.");
-//       } 
-//       else
-//       {
-//         ESP_LOGI("AirFryer", "État %s, seules LED POWER allumée.", fryer->state);
-//       }
-//    }//fin fonction airfryer_set_etat
+void airfryer_set_etat(air_fryer_status_t* fryer)
+{
+    uint8_t addr = 0x74;
+    // Sélectionner la page une seule fois au début
+    is31fl3731_select_page(addr, 0x00);
 
-void bouton_minus_callback(void)
+    if(strcmp(fryer->state, "ON") == 0)
+    {
+        // Configurer toutes les LEDs CA
+        for(int i = 0; i < 6; i++)
+        {
+            is31fl3731_light_ledCA(addr, addresse_ledCA[i], 0x01);
+        }
+        // Configurer toutes les LEDs CB
+        for(int i = 0; i < 3; i++)
+        {
+            is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x00);
+        }
+        ESP_LOGI("AirFryer", "État ON, LEDs allumées.");
+    }
+    else if(strcmp(fryer->state, "OFF") == 0)
+    {
+        // Configurer toutes les LEDs CA
+        for(int i = 0; i < 6; i++)
+        {
+            is31fl3731_light_ledCA(addr, addresse_ledCA[i], 0x00);
+        }
+        // Configurer toutes les LEDs CB
+        for(int i = 0; i < 3; i++)
+        {
+            is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x01);
+        }
+        ESP_LOGI("AirFryer", "État %s, seules LED POWER allumée.", fryer->state);
+    }
+
+    // Allumer toujours la LED D3-17 (POWER) - pas besoin de resélectionner la page
+    is31fl3731_light_ledCA(addr, 0x08, 0x01);
+    is31fl3731_light_ledCB(addr, 0x05, 0x01);
+}
+
+void bouton_Minus_callback(void)
 {
 
 }
 
-void bouton_plus_callback(void)
+void bouton_Plus_callback(void)
 {
     
 }
@@ -475,89 +491,4 @@ void test_all_leds(uint8_t addr)
     // }
     //is31fl3731_light_led(addr, 38, 255);
     ESP_LOGI("IS31FL3731", "Toutes les LEDs allumées.");
-}
-
-esp_err_t is31fl3731_init(uint8_t addr)
- {
-    esp_err_t ret;
-    // 1. Sélectionner la Function Register page (0x0B)
-    ret = is31fl3731_select_page(addr, 0x0B);
-    if (ret != ESP_OK) return ret;
-
-    // 2. Sortir du shutdown
-    ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x0A, 0x01);
-    if (ret != ESP_OK) return ret;
-
-    // 3. Mettre en mode Picture
-    ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x00, 0x00);
-    if (ret != ESP_OK) return ret;
-
-    // 4. Afficher la frame 1
-    ret = is31fl3731_write_register(I2C_NUM_0, addr, 0x01, 0x00);
-    if (ret != ESP_OK) return ret;
-
-    printf("initialisation des leds \r");
-    // for (int i = 0; i < 100; i++)
-    // {
-    //     is31fl3731_light_led(addr, i, 0);
-    // }
-    
-
-    return ESP_OK;
-}
-
-esp_err_t is31fl3731_write_register(i2c_port_t i2c_num, uint8_t addr, uint8_t reg, uint8_t data) 
-{
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    if (!cmd) return ESP_FAIL;
-
-    esp_err_t ret;
-    ret = i2c_master_start(cmd);
-    if (ret != ESP_OK) goto cleanup;
-
-    ret = i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-    if (ret != ESP_OK) goto cleanup;
-
-    ret = i2c_master_write_byte(cmd, reg, true);
-    if (ret != ESP_OK) goto cleanup;
-
-    ret = i2c_master_write_byte(cmd, data, true);
-    if (ret != ESP_OK) goto cleanup;
-
-    ret = i2c_master_stop(cmd);
-    if (ret != ESP_OK) goto cleanup;
-
-    ret = i2c_master_cmd_begin(i2c_num, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-
-cleanup:
-    i2c_cmd_link_delete(cmd);
-    return ret;
-}
-
-esp_err_t is31fl3731_select_page(uint8_t addr, uint8_t page)
-{
-    return is31fl3731_write_register(I2C_NUM_0, addr, 0xFD, page);
-}
-
-// esp_err_t is31fl3731_light_led(uint8_t addr, uint8_t led_index, uint8_t brightness) 
-// {
-//     if (led_index >= 144) return ESP_ERR_INVALID_ARG;
-//     is31fl3731_select_page(addr, 0x01);
-//     return is31fl3731_write_register(I2C_NUM_0, addr, led_index, brightness);   
-// }
-esp_err_t is31fl3731_light_led( uint8_t addr, uint8_t indiceCA, uint8_t indiceCB, uint8_t etatCA, uint8_t etatCB)
-{
-    if (led_index >= 144) return ESP_ERR_INVALID_ARG;
-    esp_err_t ret = is31fl3731_select_page(addr, 0x00);
-    if (ret != ESP_OK) {
-        ESP_LOGE("LED", "Erreur select_page");
-        return ret;
-    }
-    ret = is31fl3731_write_register(I2C_NUM_0, addr, indiceCA, etatCA);
-    ret = is31fl3731_select_page(addr, 0x00);
-    ret = is31fl3731_write_register(I2C_NUM_0, addr, indiceCB, etatCB);
-
-    ESP_LOGI("LED", "LED[%d] ← %d [%s]", led_index, brightness, ret == ESP_OK ? "OK" : "FAIL");
-
-    return ret;
 }
