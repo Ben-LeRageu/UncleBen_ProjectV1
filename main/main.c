@@ -11,6 +11,29 @@
 #include "is31fl3731.h"
 #include "Cuisson.h"
 #include "air_fryer.h"  // Ajout du nouveau fichier d'en-tête
+#include "ht16k33.h"
+
+// Définition des adresses I2C pour les afficheurs HT16K33
+#define HT16K33_ADDR_TIME     0x70  // Adresse pour l'afficheur de temps
+#define HT16K33_ADDR_TEMP     0x75  // Adresse pour l'afficheur de température
+#define DIGIT1 0x01
+#define DIGIT2 0x02
+#define DIGIT3 0x03
+#define DIGIT4 0x04
+#define DIGIT_L1_L2 0x05
+#define DIGIT_L3 0x06
+
+#define ZERO  0x01F8  // A B C D E F
+#define UN  0x0030  // B C
+#define DEUX  0x0258  // A B D E G
+#define TROIS  0x0278  // A B C D G
+#define QUATRE  0x00B0  // B C F G
+#define CINQ  0x02E8  // A C D F G
+#define SIX  0x02F8  // A C D E F G
+#define SEPT  0x0038  // A B C
+#define HUIT  0x03F8  // A B C D E F G
+#define NEUF  0x02F8  // A B C D F G
+#define LETTRE_F  0x0388  // A E F G
 
 // Déclaration globale de la variable fryer
 air_fryer_status_t fryer = {
@@ -25,8 +48,8 @@ air_fryer_status_t fryer = {
 #define I2C_MASTER_SCL_IO  GPIO_NUM_21  // adapte selon ton schéma
 #define I2C_MASTER_SDA_IO  GPIO_NUM_20  // adapte selon ton schéma
 #define I2C_MASTER_NUM     I2C_NUM_0    // I2C port
-#define I2C_MASTER_FREQ_HZ 400000       // 400kHz pour IS31FL3731
-#define I2C_MASTER_TX_BUF_DISABLE 0     // Pas de buffer en mode master
+#define I2C_MASTER_FREQ_HZ 400000       // 400kHz comme avant
+#define I2C_MASTER_TX_BUF_DISABLE 0
 #define I2C_MASTER_RX_BUF_DISABLE 0
 
 // Prototypes
@@ -47,6 +70,9 @@ void bouton_TempTime_callback(bool *temptime);
 void bouton_Preheat_callback(void);
 void bouton_TurnReminder_callback(void);
 void update_time_display(air_fryer_status_t* fryer);
+esp_err_t init_ht16k33_displays(void);  // Nouveau prototype
+void display_temperature(uint16_t temp);
+uint16_t uiTranslate_data(uint8_t chiffre);
 
 #define TOUCH_THRESH_PERCENT  (2)  // Seuil à 2% de la valeur au repos
 #define NUM_TOUCH_BUTTONS     14
@@ -115,22 +141,60 @@ uint8_t addresse_ledCB[9] = {0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x1
 
 void app_main(void)
 {
-    uint8_t addr = 0x74;
+    esp_err_t ret;
+    
+    // Initialisation GPIO pour la cuisson
     cuisson_gpio_init();
     
-    ESP_ERROR_CHECK(i2c_master_init());
-    if (is31fl3731_init(addr) != ESP_OK) {
-        ESP_LOGE("IS31FL3731", "Échec de l'initialisation");
+    // Initialisation I2C
+    ret = i2c_master_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE("MAIN", "Échec de l'initialisation I2C: %d", ret);
         return;
     }
-   // test_all_leds(addr);
-    airfryer_set_etat(&fryer);
-    if(queue_touch_evt == NULL)
-    {
-        queue_touch_evt = xQueueCreate(16, sizeof(touch_evt_t));
+    
+    // Petit délai après l'initialisation I2C
+    esp_rom_delay_us(100000);
+    
+    // Initialisation des afficheurs HT16K33 d'abord
+    ret = init_ht16k33_displays();
+    if (ret != ESP_OK) {
+        ESP_LOGE("MAIN", "Échec de l'initialisation des afficheurs HT16K33");
+        return;
     }
+    
+    // Affichage initial de la température
+    display_temperature(fryer.temp);
+    
+    // Petit délai entre les initialisations
+    esp_rom_delay_us(100000);
+    
+    // Initialisation de l'IS31FL3731
+    uint8_t addr = 0x74;
+    if (is31fl3731_init(addr) != ESP_OK) {
+        ESP_LOGE("MAIN", "Échec de l'initialisation IS31FL3731");
+        return;
+    }
+    
+    // Configuration initiale de l'état
+    airfryer_set_etat(&fryer);
+    
+    // Initialisation de la file d'attente pour les événements tactiles
+    if(queue_touch_evt == NULL) {
+        queue_touch_evt = xQueueCreate(16, sizeof(touch_evt_t));
+        if(queue_touch_evt == NULL) {
+            ESP_LOGE("MAIN", "Échec de la création de la file d'attente des événements tactiles");
+            return;
+        }
+    }
+    
+    // Initialisation des boutons tactiles
     init_touch_buttons();
-    xTaskCreate(touch_task, "touch_evt_task", 4096 /*2048*/, NULL, 5, NULL);
+    
+    // Création de la tâche de gestion des touches
+    xTaskCreate(touch_task, "touch_evt_task", 4096, NULL, 5, NULL);
+    
+    ESP_LOGI("MAIN", "Initialisation complète réussie");
 }
 
 //fonction init I2C
@@ -139,21 +203,28 @@ esp_err_t i2c_master_init(void)
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = I2C_MASTER_SDA_IO,
-        .sda_pullup_en = GPIO_PULLUP_DISABLE,
         .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_DISABLE,
         .scl_pullup_en = GPIO_PULLUP_DISABLE,
         .master.clk_speed = I2C_MASTER_FREQ_HZ,
         .clk_flags = 0,
     };
-    esp_err_t err;
 
-    err = i2c_param_config(I2C_MASTER_NUM, &conf);
-    if (err != ESP_OK) return err;
+    esp_err_t err = i2c_param_config(I2C_MASTER_NUM, &conf);
+    if (err != ESP_OK) {
+        ESP_LOGE("I2C", "Erreur de configuration I2C: %d", err);
+        return err;
+    }
 
-    err = i2c_driver_install(I2C_MASTER_NUM, conf.mode,
-                             I2C_MASTER_RX_BUF_DISABLE,
-                             I2C_MASTER_TX_BUF_DISABLE, 0);
-    return err;
+    err = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 
+                            I2C_MASTER_RX_BUF_DISABLE,
+                            I2C_MASTER_TX_BUF_DISABLE, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE("I2C", "Erreur d'installation du driver I2C: %d", err);
+        return err;
+    }
+
+    return ESP_OK;
 }
 
 void init_touch_buttons(void)
@@ -236,63 +307,114 @@ void touch_task(void *param)
             {
                 // Suivre exactement l'ordre de l'énumération touch_bouton_t
                 case TOUCH_PAD_NUM10:  // AIRFRY
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 20;
                     fryer.temp = 400;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM2:   // FRIES
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 15;
                     fryer.temp = 400;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM3:   // REHEAT
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 15;
                     fryer.temp = 300;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM9:   // MINUS
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     bouton_Minus_callback();
                     break;
+                }
+                else break;
+                
 
                 case TOUCH_PAD_NUM7:   // TEMPTIME
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     bouton_TempTime_callback(&temptime);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM8:   // PLUS
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     bouton_Plus_callback();
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM6:   // NUGGETS
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 15;
                     fryer.temp = 375;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM1:   // DEHYDRATE
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 480;  // 8 heures
                     fryer.temp = 135;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
-
+                }
+                else break;
+                
                 case TOUCH_PAD_NUM5:   // KEEPWARM
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     fryer.total_minutes = 30;
                     fryer.temp = 200;
                     update_time_display(&fryer);
+                    display_temperature(fryer.temp);
                     break;
+                }
+                else break;
 
                 case TOUCH_PAD_NUM14:  // PREHEAT
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     bouton_Preheat_callback();
                     break;
+                }
+                else break;
 
                 case TOUCH_PAD_NUM13:  // STOPCANCEL
+                if((strcmp(fryer.state, "ON") == 0) || (strcmp(fryer.state, "cooking") == 0))
+                {
                     bouton_StopCancel_callback();
                     break;
+                }
+                else break;
 
                 case TOUCH_PAD_NUM4:   // POWER
-                    if(strcmp(fryer.state, "OFF") == 0)
+                if(strcmp(fryer.state, "OFF") == 0)
                     {
                         strcpy(fryer.state, "ON");
                     }
@@ -304,12 +426,20 @@ void touch_task(void *param)
                     break;
 
                 case TOUCH_PAD_NUM12:  // START
+                if((strcmp(fryer.state, "ON") == 0) || (strcmp(fryer.state, "stopped") == 0))
+                {
                     bouton_Start_callback();
                     break;
+                }
+                else break; 
 
                 case TOUCH_PAD_NUM11:  // TURNREMINDER
+                if(strcmp(fryer.state, "ON") == 0)
+                {
                     bouton_TurnReminder_callback();
                     break;
+                }
+                else break;
 
                 default:
                     break;
@@ -378,10 +508,14 @@ void airfryer_set_etat(air_fryer_status_t* fryer)
 
 void bouton_Minus_callback(void)
 {
-    if((temptime == TEMP) && (fryer.temp > 100))
+    if(temptime == TEMP) 
     {
-        fryer.temp -= 25;
-        ESP_LOGI("TEMP", "Temperature diminuée à %d°C", fryer.temp);
+        if(fryer.temp > 100)
+        {
+            fryer.temp -= 25;
+            display_temperature(fryer.temp);
+            ESP_LOGI("TEMP", "Temperature diminuée à %d°C", fryer.temp);
+        }
     }
     else
     {
@@ -396,6 +530,7 @@ void bouton_Plus_callback(void)
     if((temptime == TEMP) && (fryer.temp < 400))
     {
         fryer.temp += 25;
+        display_temperature(fryer.temp);
         ESP_LOGI("TEMP", "Temperature augmentée à %d°C", fryer.temp);
     }
     else
@@ -465,5 +600,82 @@ void update_time_display(air_fryer_status_t* fryer)
         int hours = fryer->total_minutes / 60;
         int minutes = fryer->total_minutes % 60;
         snprintf(fryer->time_display, sizeof(fryer->time_display), "%1dh%02d", hours, minutes);
+    }
+}
+
+// Fonction d'initialisation des afficheurs HT16K33
+esp_err_t init_ht16k33_displays(void)
+{
+    esp_err_t ret;
+    
+    ESP_LOGI("HT16K33", "Début de l'initialisation des afficheurs");
+    
+    // Initialisation de l'afficheur de temps
+    ret = ht16k33_init(HT16K33_ADDR_TIME);
+    if (ret != ESP_OK) {
+        ESP_LOGE("HT16K33", "Échec de l'initialisation de l'afficheur de temps");
+        return ret;
+    }
+    
+    // Initialisation de l'afficheur de température
+    ret = ht16k33_init(HT16K33_ADDR_TEMP);
+    if (ret != ESP_OK) {
+        ESP_LOGE("HT16K33", "Échec de l'initialisation de l'afficheur de température");
+        return ret;
+    }
+    
+    ESP_LOGI("HT16K33", "Initialisation des afficheurs réussie");
+    return ESP_OK;
+}
+
+// Fonction pour afficher la température sur l'afficheur HT16K33
+void display_temperature(uint16_t temp) 
+{
+    uint8_t display_buffer[16] = {0};  // Buffer pour les données de l'afficheur
+    
+    // Calcul des chiffres individuels
+    uint8_t digit1 = temp / 100;       // Centaines
+    uint8_t digit2 = (temp / 10) % 10; // Dizaines
+    uint8_t digit3 = temp % 10;        // Unités
+    digit1 = uiTranslate_data(digit1);
+    digit2 = uiTranslate_data(digit2);
+    digit3 = uiTranslate_data(digit3);
+    
+    // Écriture des données sur l'afficheur
+    esp_err_t ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT1, digit1, 16);
+    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT2, digit2, 16);
+    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT3, digit3, 16);
+    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT4, LETTRE_F, 16);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGE("TEMP", "Erreur lors de l'écriture sur l'afficheur: %d", ret);
+    }
+}
+
+uint16_t uiTranslate_data(uint8_t chiffre)
+{
+    switch(chiffre)
+    {
+        case 0:
+            return ZERO;
+        case 1:
+            return UN;
+        case 2:
+            return DEUX;
+        case 3:
+            return TROIS;
+        case 4:
+            return QUATRE;
+        case 5:
+            return CINQ;
+        case 6:
+            return SIX;
+        case 7:
+            return SEPT;
+        case 8:
+            return HUIT;
+        case 9:
+            return NEUF;
+    
     }
 }

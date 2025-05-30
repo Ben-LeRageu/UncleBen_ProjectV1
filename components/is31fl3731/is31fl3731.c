@@ -111,11 +111,9 @@ esp_err_t is31fl3731_light_ledCB(uint8_t addr, uint8_t indiceCB, uint8_t etatCB)
     //     return ret;
     // }
     esp_err_t ret = is31fl3731_write_register(I2C_NUM_0, addr, indiceCB, etatCB);
-
     // ESP_LOGI("LED", "LED CB[%d]=%d [%s]", 
     //          indiceCB, etatCB,
     //          ret == ESP_OK ? "OK" : "FAIL");
-
     return ret;
 }
 
