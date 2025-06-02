@@ -71,7 +71,7 @@ esp_err_t ht16k33_display_setup(uint8_t addr, uint8_t on, uint8_t blink);
  * @param size Taille des données
  * @return ESP_OK en cas de succès
  */
-esp_err_t ht16k33_write_data(uint8_t addr, uint8_t reg, uint16_t *data, size_t size);
+esp_err_t ht16k33_write_data(uint8_t addr, uint8_t reg, uint8_t *data, size_t size);
 
 #ifdef __cplusplus
 }

@@ -16,24 +16,12 @@
 // Définition des adresses I2C pour les afficheurs HT16K33
 #define HT16K33_ADDR_TIME     0x70  // Adresse pour l'afficheur de temps
 #define HT16K33_ADDR_TEMP     0x75  // Adresse pour l'afficheur de température
-#define DIGIT1 0x01
-#define DIGIT2 0x02
-#define DIGIT3 0x03
-#define DIGIT4 0x04
-#define DIGIT_L1_L2 0x05
-#define DIGIT_L3 0x06
-
-#define ZERO  0x01F8  // A B C D E F
-#define UN  0x0030  // B C
-#define DEUX  0x0258  // A B D E G
-#define TROIS  0x0278  // A B C D G
-#define QUATRE  0x00B0  // B C F G
-#define CINQ  0x02E8  // A C D F G
-#define SIX  0x02F8  // A C D E F G
-#define SEPT  0x0038  // A B C
-#define HUIT  0x03F8  // A B C D E F G
-#define NEUF  0x02F8  // A B C D F G
-#define LETTRE_F  0x0388  // A E F G
+#define DIGIT1 0x02
+#define DIGIT2 0x04
+#define DIGIT3 0x06
+#define DIGIT4 0x08
+#define DIGIT_L1_L2 0x0A
+#define DIGIT_L3 0x0C
 
 // Déclaration globale de la variable fryer
 air_fryer_status_t fryer = {
@@ -72,7 +60,6 @@ void bouton_TurnReminder_callback(void);
 void update_time_display(air_fryer_status_t* fryer);
 esp_err_t init_ht16k33_displays(void);  // Nouveau prototype
 void display_temperature(uint16_t temp);
-uint16_t uiTranslate_data(uint8_t chiffre);
 
 #define TOUCH_THRESH_PERCENT  (2)  // Seuil à 2% de la valeur au repos
 #define NUM_TOUCH_BUTTONS     14
@@ -137,7 +124,25 @@ static uint32_t valeurs_repos[NUM_TOUCH_BUTTONS] = {0};
 uint8_t addresse_ledCA[9] = {0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10};
 uint8_t addresse_ledCB[9] = {0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11};
 
+typedef struct {
+    uint8_t reg;
+    uint8_t regp1;
+} digit_pattern_t;
 
+static const digit_pattern_t digit_segments[11] = {
+    {0b11111000, 0b00000001}, // 0 → A B C D E F
+    {0b01100000, 0b00000000}, // 1 → B C
+    {0b11011000, 0b00000010}, // 2 → A B D E G
+    {0b11110000, 0b00000010}, // 3 → A B C D G
+    {0b01100100, 0b00000010}, // 4 → B C F G
+    {0b10110100, 0b00000010}, // 5 → A C D F G
+    {0b10111100, 0b00000010}, // 6 → A C D E F G
+    {0b11100000, 0b00000000}, // 7 → A B C
+    {0b11111100, 0b00000011}, // 8 → A B C D E F G
+    {0b11110100, 0b00000010}, // 9 → A B C D F G
+    {0b10001000, 0b00000011}  // F → A E F G
+};
+#define LETTRE_F digit_segments[10]
 
 void app_main(void)
 {
@@ -478,12 +483,12 @@ void airfryer_set_etat(air_fryer_status_t* fryer)
         // Configurer toutes les LEDs CA
         for(int i = 0; i < 6; i++)
         {
-            is31fl3731_light_ledCA(addr, addresse_ledCA[i], 0x01);
+            is31fl3731_light_ledCA(addr, addresse_ledCA[i], 0xFF);
         }
         // Configurer toutes les LEDs CB
         for(int i = 0; i < 3; i++)
         {
-            is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x00);
+            //is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x00);
         }
         ESP_LOGI("AirFryer", "État ON, LEDs allumées.");
     }
@@ -497,13 +502,14 @@ void airfryer_set_etat(air_fryer_status_t* fryer)
         // Configurer toutes les LEDs CB
         for(int i = 0; i < 3; i++)
         {
-            is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x01);
+            //is31fl3731_light_ledCB(addr, addresse_ledCB[i], 0x01);
         }
         ESP_LOGI("AirFryer", "État %s, seule LED POWER allumée.", fryer->state);
     }
     // Allumer toujours la LED D3-17 (POWER) - pas besoin de resélectionner la page
-    is31fl3731_light_ledCA(addr, 0x08, 0x01);
-    is31fl3731_light_ledCB(addr, 0x05, 0x00);
+    //is31fl3731_light_ledCA(addr, 0x10, 0x01);
+    is31fl3731_light_ledCA(addr, 0x04, 0x08);//lum bouton power
+    //is31fl3731_light_ledCB(addr, 0x05, 0x00);
 }
 
 void bouton_Minus_callback(void)
@@ -514,7 +520,7 @@ void bouton_Minus_callback(void)
         {
             fryer.temp -= 25;
             display_temperature(fryer.temp);
-            ESP_LOGI("TEMP", "Temperature diminuée à %d°C", fryer.temp);
+            ESP_LOGI("TEMP", "Temperature diminuée à %d°F", fryer.temp);
         }
     }
     else
@@ -531,7 +537,7 @@ void bouton_Plus_callback(void)
     {
         fryer.temp += 25;
         display_temperature(fryer.temp);
-        ESP_LOGI("TEMP", "Temperature augmentée à %d°C", fryer.temp);
+        ESP_LOGI("TEMP", "Temperature augmentée à %d°F", fryer.temp);
     }
     else
     {
@@ -630,52 +636,32 @@ esp_err_t init_ht16k33_displays(void)
 
 // Fonction pour afficher la température sur l'afficheur HT16K33
 void display_temperature(uint16_t temp) 
-{
-    uint8_t display_buffer[16] = {0};  // Buffer pour les données de l'afficheur
-    
+{   
+    uint8_t ram[16] = {0};
     // Calcul des chiffres individuels
     uint8_t digit1 = temp / 100;       // Centaines
     uint8_t digit2 = (temp / 10) % 10; // Dizaines
     uint8_t digit3 = temp % 10;        // Unités
-    digit1 = uiTranslate_data(digit1);
-    digit2 = uiTranslate_data(digit2);
-    digit3 = uiTranslate_data(digit3);
+    digit_pattern_t p1 = digit_segments[digit1];
+    digit_pattern_t p2 = digit_segments[digit2];
+    digit_pattern_t p3 = digit_segments[digit3];
+    digit_pattern_t p4 = LETTRE_F;
+    ram[DIGIT1]     = p1.reg;
+    ram[DIGIT1 + 1] = p1.regp1;
+    ram[DIGIT2]     = p2.reg;
+    ram[DIGIT2 + 1] = p2.regp1;
+    ram[DIGIT3]     = p3.reg;
+    ram[DIGIT3 + 1] = p3.regp1;
+    ram[DIGIT4]     = p4.reg;
+    ram[DIGIT4 + 1] = p4.regp1;
     
     // Écriture des données sur l'afficheur
-    esp_err_t ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT1, digit1, 16);
-    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT2, digit2, 16);
-    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT3, digit3, 16);
-    ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT4, LETTRE_F, 16);
+    esp_err_t ret = ht16k33_write_data(HT16K33_ADDR_TEMP, 0x00, ram, 16);
+    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT2, digit2, 16);
+    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT3, digit3, 16);
+    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT4, LETTRE_F, 16);
     
     if (ret != ESP_OK) {
         ESP_LOGE("TEMP", "Erreur lors de l'écriture sur l'afficheur: %d", ret);
-    }
-}
-
-uint16_t uiTranslate_data(uint8_t chiffre)
-{
-    switch(chiffre)
-    {
-        case 0:
-            return ZERO;
-        case 1:
-            return UN;
-        case 2:
-            return DEUX;
-        case 3:
-            return TROIS;
-        case 4:
-            return QUATRE;
-        case 5:
-            return CINQ;
-        case 6:
-            return SIX;
-        case 7:
-            return SEPT;
-        case 8:
-            return HUIT;
-        case 9:
-            return NEUF;
-    
     }
 }

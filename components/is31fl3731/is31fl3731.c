@@ -69,7 +69,7 @@ esp_err_t is31fl3731_init(uint8_t addr)
     }
     for(int i=0;i<3;i++)
     {
-        ret = is31fl3731_write_register(I2C_NUM_0, addr, addresse_ledCB[i], 0xFF);
+        ret = is31fl3731_write_register(I2C_NUM_0, addr, addresse_ledCB[i], 0x00);
         if (ret != ESP_OK) return ret;
     }
     for(int i=3;i<8;i++)

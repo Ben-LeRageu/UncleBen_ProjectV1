@@ -89,7 +89,7 @@ esp_err_t ht16k33_display_setup(uint8_t addr, uint8_t on, uint8_t blink)
     return ht16k33_write_register(addr, HT16K33_CMD_DISPLAY_SETUP | (blink << 1) | on);
 }
 
-esp_err_t ht16k33_write_data(uint8_t addr, uint8_t reg, uint16_t *data, size_t size)
+esp_err_t ht16k33_write_data(uint8_t addr, uint8_t reg, uint8_t *data, size_t size)
 {
     esp_err_t ret;
 
