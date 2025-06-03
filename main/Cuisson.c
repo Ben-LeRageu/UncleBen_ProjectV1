@@ -1,6 +1,6 @@
 #include "driver/gpio.h"
 #include "driver/adc.h"
-#include "driver/ledc.h"
+#include "driver/mcpwm.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,13 +12,12 @@
 #define FAN_CTRL_GPIO   GPIO_NUM_36    // OPTO-TRIAC pour le ventilateur
 #define NTC_ADC_CHANNEL ADC2_CHANNEL_4 // Pour la lecture NTC
 
-// Configuration LEDC pour le relais
-#define LEDC_TIMER              LEDC_TIMER_0
-#define LEDC_MODE              LEDC_LOW_SPEED_MODE
-#define LEDC_CHANNEL           LEDC_CHANNEL_0
-#define LEDC_DUTY_RES          LEDC_TIMER_13_BIT // Résolution de 13 bits (0-8191)
-#define LEDC_FREQUENCY         10                // 10 Hz
-#define LEDC_DUTY_MAX         8191               // Valeur maximale pour 13 bits
+// Configuration MCPWM
+#define MCPWM_TIMER          MCPWM_TIMER_0
+#define MCPWM_GEN           MCPWM_OPR_A
+#define MCPWM_UNIT          MCPWM_UNIT_0
+#define MCPWM_FREQUENCY     1000        // 1 kHz
+#define MCPWM_DUTY_MAX     100.0       // Pourcentage maximum
 
 // Configuration du ventilateur
 #define FAN_PULSE_US     100           // Durée de l'impulsion pour l'OPTO-TRIAC
@@ -54,30 +53,45 @@ static float lire_temperature()
 }
 
 static void tache_maintien_temp(void *param) {
-    float kp = 0.1f;  // Coefficient proportionnel
-    float ki = 0.01f; // Coefficient intégral
+    float kp = 0.05f;  // Réduit pour une réponse plus douce
+    float ki = 0.001f; // Réduit pour éviter l'accumulation rapide
+    float kd = 0.01f;  // Ajout d'un terme dérivé pour la stabilité
     float erreur_integrale = 0.0f;
+    float erreur_precedente = 0.0f;
+    const float MAX_INTEGRAL = 50.0f; // Limite l'accumulation de l'intégrale
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     while (cuisson_active) {
         float t = lire_temperature();
         float erreur = fryer.temp - t;
-        erreur_integrale += erreur;
         
-        // Calcul de la puissance avec PI
-        puissance_actuelle = kp * erreur + ki * erreur_integrale;
+        // Anti-windup : limite l'accumulation de l'erreur intégrale
+        erreur_integrale += erreur;
+        if (erreur_integrale > MAX_INTEGRAL) erreur_integrale = MAX_INTEGRAL;
+        if (erreur_integrale < -MAX_INTEGRAL) erreur_integrale = -MAX_INTEGRAL;
+        
+        // Terme dérivé
+        float erreur_derivee = (erreur - erreur_precedente);
+        erreur_precedente = erreur;
+        
+        // Calcul de la puissance avec PID
+        puissance_actuelle = kp * erreur + 
+                           ki * erreur_integrale + 
+                           kd * erreur_derivee;
         
         // Limites de la puissance entre 0 et 1
         if (puissance_actuelle > 1.0f) puissance_actuelle = 1.0f;
         if (puissance_actuelle < 0.0f) puissance_actuelle = 0.0f;
 
-        // Mise à jour du duty cycle LEDC
-        uint32_t duty = (uint32_t)(puissance_actuelle * LEDC_DUTY_MAX);
-        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
-        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+        // Limite supplémentaire de sécurité : maximum 80% de puissance
+        if (puissance_actuelle > 0.5f) puissance_actuelle = 0.5f;
 
-        ESP_LOGI(TAG, "Temp: %.2f°F / Cible: %d°F / Puissance: %.2f%%", 
-                 t, fryer.temp, puissance_actuelle * 100.0f);
+        // Mise à jour du duty cycle MCPWM
+        float duty = puissance_actuelle * MCPWM_DUTY_MAX;
+        ESP_ERROR_CHECK(mcpwm_set_duty(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, duty));
+        
+        ESP_LOGI(TAG, "Temp: %.2f°F / Cible: %d°F / Erreur: %.2f / I: %.2f / D: %.2f / Puissance: %.2f%%", 
+                 t, fryer.temp, erreur, erreur_integrale, erreur_derivee, puissance_actuelle * 100.0f);
 
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000));
     }
@@ -97,35 +111,32 @@ void cuisson_gpio_init()
     };
     gpio_config(&io_conf);
 
-    // Configuration du timer LEDC
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_MODE,
-        .timer_num = LEDC_TIMER,
-        .duty_resolution = LEDC_DUTY_RES,
-        .freq_hz = LEDC_FREQUENCY,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&ledc_timer);
+    // Configuration MCPWM
+    ESP_ERROR_CHECK(mcpwm_gpio_init(MCPWM_UNIT, MCPWM_GEN, HEATER_GPIO));
 
-    // Configuration du canal LEDC
-    ledc_channel_config_t ledc_channel = {
-        .speed_mode = LEDC_MODE,
-        .channel = LEDC_CHANNEL,
-        .timer_sel = LEDC_TIMER,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = HEATER_GPIO,
-        .duty = 0,
-        .hpoint = 0
+    mcpwm_config_t pwm_config = {
+        .frequency = MCPWM_FREQUENCY,
+        .cmpr_a = 0,                    // Duty cycle initial de 0%
+        .duty_mode = MCPWM_DUTY_MODE_0,
+        .counter_mode = MCPWM_UP_DOWN_COUNTER,  // Mode compteur up/down pour un signal plus stable
     };
-    ledc_channel_config(&ledc_channel);
+    
+    ESP_ERROR_CHECK(mcpwm_init(MCPWM_UNIT, MCPWM_TIMER, &pwm_config));
+    
+    // Configuration des paramètres du générateur PWM
+    ESP_ERROR_CHECK(mcpwm_set_duty_type(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, MCPWM_DUTY_MODE_0));
+    
+    // Démarrer avec un duty cycle de 0%
+    ESP_ERROR_CHECK(mcpwm_start(MCPWM_UNIT, MCPWM_TIMER));
+    ESP_ERROR_CHECK(mcpwm_set_duty(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, 0));
+
+    // Forcer une mise à jour immédiate du duty cycle
+    ESP_ERROR_CHECK(mcpwm_set_duty_in_us(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, 0));
 
     // Configuration de l'ADC pour la lecture NTC
-    //adc2_config_width(ADC_WIDTH_BIT_12);
     adc2_config_channel_atten(NTC_ADC_CHANNEL, ADC_ATTEN_DB_11);
 
     // État initial : tout éteint
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0);
-    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
     gpio_set_level(FAN_CTRL_GPIO, 0);
 
     // Création de la tâche du ventilateur
@@ -145,8 +156,8 @@ void stop_cuisson()
 {
     cuisson_active = false;
     fan_active = false;
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0);
-    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+    ESP_ERROR_CHECK(mcpwm_set_duty(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, 0));
+    ESP_ERROR_CHECK(mcpwm_set_duty_in_us(MCPWM_UNIT, MCPWM_TIMER, MCPWM_GEN, 0));
     gpio_set_level(FAN_CTRL_GPIO, 0);
     if (tache_maintien) {
         vTaskDelete(tache_maintien);

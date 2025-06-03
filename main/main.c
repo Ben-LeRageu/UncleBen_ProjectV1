@@ -12,6 +12,11 @@
 #include "Cuisson.h"
 #include "air_fryer.h"  // Ajout du nouveau fichier d'en-tête
 #include "ht16k33.h"
+//#include "esp_http_server.h"
+//#include "cJSON.h"
+//#include "esp_wifi.h"
+//#include "esp_event.h"
+//#include "esp_netif.h"
 
 // Définition des adresses I2C pour les afficheurs HT16K33
 #define HT16K33_ADDR_TIME     0x70  // Adresse pour l'afficheur de temps
@@ -305,9 +310,9 @@ void touch_task(void *param)
     {
         if (xQueueReceive(queue_touch_evt, &evt, portMAX_DELAY))
         {
-            touch_pad_t touch_num = evt.pad_num;  // On utilise directement le numéro du pad
-            if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
-            {
+          touch_pad_t touch_num = evt.pad_num;  // On utilise directement le numéro du pad
+          if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
+          {
             switch (touch_num)
             {
                 // Suivre exactement l'ordre de l'énumération touch_bouton_t
@@ -449,25 +454,7 @@ void touch_task(void *param)
                 default:
                     break;
             }
-            }
-            // for (int i = 0; i < NUM_TOUCH_BUTTONS; ++i) 
-            // {
-            //     if (boutons_touches[i].pad == evt.pad_num) 
-            //     {
-            //         if (evt.intr_mask & TOUCH_PAD_INTR_MASK_ACTIVE)
-            //         {
-            //             ESP_LOGI(TAG, "TOUCH DÉTECTÉ: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-            //         } 
-            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) 
-            //         {
-            //             ESP_LOGI(TAG, "RELÂCHE: %s (pad %"PRIu32")", boutons_touches[i].nom, evt.pad_num);
-            //         } 
-            //         else if (evt.intr_mask & TOUCH_PAD_INTR_MASK_TIMEOUT) 
-            //         {
-            //             ESP_LOGW(TAG, "TIMEOUT sur pad %"PRIu32, evt.pad_num);
-            //         }
-            //     }
-            // }
+          }
         }
     }
 }
@@ -509,7 +496,6 @@ void airfryer_set_etat(air_fryer_status_t* fryer)
     // Allumer toujours la LED D3-17 (POWER) - pas besoin de resélectionner la page
     //is31fl3731_light_ledCA(addr, 0x10, 0x01);
     is31fl3731_light_ledCA(addr, 0x04, 0x08);//lum bouton power
-    //is31fl3731_light_ledCB(addr, 0x05, 0x00);
 }
 
 void bouton_Minus_callback(void)
@@ -585,9 +571,28 @@ void bouton_TurnReminder_callback(void)
 
 }
 
+//esp_err_t status_handler(httpd_req_t *req)
+//{
+//    cJSON *root = cJSON_CreateObject();
+
+//    cJSON_AddNumberToObject(root, "temp", fryer.temp);
+//    cJSON_AddStringToObject(root, "time", fryer.time_display);
+//    cJSON_AddStringToObject(root, "state", fryer.state);
+//    cJSON_AddStringToObject(root, "mode", fryer.mode);
+
+//    const char *json_str = cJSON_PrintUnformatted(root);
+
+//    httpd_resp_set_type(req, "application/json");
+//    httpd_resp_send(req, json_str, strlen(json_str));
+
+//    cJSON_Delete(root);
+//    free((void *)json_str);
+
+//    return ESP_OK;
+//}
+
 void test_all_leds(uint8_t addr) 
 {
-    
     ESP_LOGI("IS31FL3731", "Toutes les LEDs allumées.");
 }
 // Fonction pour mettre à jour l'affichage du temps
@@ -657,9 +662,6 @@ void display_temperature(uint16_t temp)
     
     // Écriture des données sur l'afficheur
     esp_err_t ret = ht16k33_write_data(HT16K33_ADDR_TEMP, 0x00, ram, 16);
-    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT2, digit2, 16);
-    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT3, digit3, 16);
-    //ret = ht16k33_write_data(HT16K33_ADDR_TEMP, DIGIT4, LETTRE_F, 16);
     
     if (ret != ESP_OK) {
         ESP_LOGE("TEMP", "Erreur lors de l'écriture sur l'afficheur: %d", ret);
