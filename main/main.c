@@ -12,11 +12,13 @@
 #include "Cuisson.h"
 #include "air_fryer.h"  // Ajout du nouveau fichier d'en-tête
 #include "ht16k33.h"
-//#include "esp_http_server.h"
-//#include "cJSON.h"
-//#include "esp_wifi.h"
-//#include "esp_event.h"
-//#include "esp_netif.h"
+#include "esp_http_server.h"
+#include "cJSON.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "wifi_setup.h"
+#include "http_server.h"
 
 // Définition des adresses I2C pour les afficheurs HT16K33
 #define HT16K33_ADDR_TIME     0x70  // Adresse pour l'afficheur de temps
@@ -152,7 +154,8 @@ static const digit_pattern_t digit_segments[11] = {
 void app_main(void)
 {
     esp_err_t ret;
-    
+    // Initialisation du mode AP
+    wifi_init_ap_mode();
     // Initialisation GPIO pour la cuisson
     cuisson_gpio_init();
     
@@ -185,6 +188,9 @@ void app_main(void)
         ESP_LOGE("MAIN", "Échec de l'initialisation IS31FL3731");
         return;
     }
+
+    // Démarrage du serveur HTTP
+    start_http_server();
     
     // Configuration initiale de l'état
     airfryer_set_etat(&fryer);
@@ -570,26 +576,6 @@ void bouton_TurnReminder_callback(void)
 {
 
 }
-
-//esp_err_t status_handler(httpd_req_t *req)
-//{
-//    cJSON *root = cJSON_CreateObject();
-
-//    cJSON_AddNumberToObject(root, "temp", fryer.temp);
-//    cJSON_AddStringToObject(root, "time", fryer.time_display);
-//    cJSON_AddStringToObject(root, "state", fryer.state);
-//    cJSON_AddStringToObject(root, "mode", fryer.mode);
-
-//    const char *json_str = cJSON_PrintUnformatted(root);
-
-//    httpd_resp_set_type(req, "application/json");
-//    httpd_resp_send(req, json_str, strlen(json_str));
-
-//    cJSON_Delete(root);
-//    free((void *)json_str);
-
-//    return ESP_OK;
-//}
 
 void test_all_leds(uint8_t addr) 
 {

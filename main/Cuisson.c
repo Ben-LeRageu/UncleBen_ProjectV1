@@ -16,7 +16,7 @@
 #define MCPWM_TIMER          MCPWM_TIMER_0
 #define MCPWM_GEN           MCPWM_OPR_A
 #define MCPWM_UNIT          MCPWM_UNIT_0
-#define MCPWM_FREQUENCY     1000        // 1 kHz
+#define MCPWM_FREQUENCY     2000        // 2 kHz
 #define MCPWM_DUTY_MAX     100.0       // Pourcentage maximum
 
 // Configuration du ventilateur
