@@ -10,10 +10,10 @@ static esp_err_t status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
 
-    cJSON_AddNumberToObject(root, "temp", fryer.temp);
-    cJSON_AddStringToObject(root, "time", fryer.time_display);
-    cJSON_AddStringToObject(root, "state", fryer.state);
-    cJSON_AddStringToObject(root, "mode", fryer.mode);
+    cJSON_AddNumberToObject(root, "Temp", fryer.temp);
+    cJSON_AddStringToObject(root, "Time", fryer.time_display);
+    cJSON_AddStringToObject(root, "State", fryer.state);
+    cJSON_AddStringToObject(root, "Mode", fryer.mode);
 
     const char *json_str = cJSON_PrintUnformatted(root);
 
@@ -69,6 +69,22 @@ static esp_err_t root_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+esp_err_t configure_handler(httpd_req_t *req)
+{
+    char buf[128];
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (ret <= 0) return ESP_FAIL;
+
+    buf[ret] = '\0';
+    ESP_LOGI("CONFIGURE", "Données reçues : %s", buf);
+
+    // Ici, tu peux parser le JSON avec cJSON
+    // Pour extraire ssid / password et les stocker ou les utiliser
+
+    httpd_resp_sendstr(req, "OK");
+    return ESP_OK;
+}
+
 void start_http_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -101,6 +117,14 @@ void start_http_server(void)
             .user_ctx  = NULL
         };
         httpd_register_uri_handler(server, &update_uri);
+
+        httpd_uri_t configure_uri = {
+        .uri       = "/configure",
+        .method    = HTTP_POST,
+        .handler   = configure_handler,
+        .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &configure_uri);
 
         ESP_LOGI("HTTP", "Serveur HTTP démarré avec /, /status et /update");
     }
